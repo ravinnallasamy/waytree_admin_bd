@@ -1,0 +1,17 @@
+{
+  "watch": [
+    "src",
+    "models",
+    "routes",
+    "controllers",
+    "config"
+  ],
+  "ext": "js,ts,json",
+  "exec": "ts-node src/index.ts",
+  "ignore": [
+    "node_modules/**/*",
+    "*.test.js",
+    "*.spec.js",
+    ".git"
+  ]
+}
