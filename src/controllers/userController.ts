@@ -123,7 +123,7 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
 export const getUserStats = async (req: Request, res: Response): Promise<void> => {
     try {
         console.log('📊 Fetching user statistics...');
-        
+
         const totalUsers = await User.countDocuments();
         const usersByRole = await User.aggregate([
             { $group: { _id: '$role', count: { $sum: 1 } } }
@@ -148,9 +148,9 @@ export const getUserStats = async (req: Request, res: Response): Promise<void> =
         });
     } catch (error: any) {
         console.error('❌ Error fetching user stats:', error);
-        res.status(500).json({ 
-            message: 'Error fetching user statistics', 
-            error: error.message 
+        res.status(500).json({
+            message: 'Error fetching user statistics',
+            error: error.message
         });
     }
 };
@@ -200,7 +200,7 @@ export const getAllUsersPaginated = async (req: Request, res: Response): Promise
         console.log('📥 Fetching users...');
         const pageNum = parseInt(page as string);
         const limitNum = parseInt(limit as string);
-        
+
         const users = await User.find(query)
             .select('-profileEmbedding') // Exclude large fields
             .sort({ createdAt: -1 })
@@ -262,5 +262,76 @@ export const toggleBlockUser = async (req: Request, res: Response): Promise<void
         });
     } catch (error: any) {
         res.status(500).json({ message: 'Error updating user status', error: error.message });
+    }
+};
+
+/**
+ * Update User Details
+ * PUT /api/users/:id
+ */
+export const updateUserDetails = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const allowedFields = [
+            'name', 'role', 'primaryGoal', 'company', 'website',
+            'location', 'oneLiner', 'profileImage', 'interests', 'skills', 'isBlocked'
+        ];
+
+        // Filter valid updates
+        const updates: any = {};
+        Object.keys(req.body).forEach(key => {
+            if (allowedFields.includes(key)) {
+                updates[key] = req.body[key];
+            }
+        });
+
+        // Special handling for photoUrl -> profileImage mapping if needed
+        if (req.body.photoUrl && !updates.profileImage) {
+            updates.profileImage = req.body.photoUrl;
+        }
+
+        const user = await User.findByIdAndUpdate(
+            id,
+            { $set: updates },
+            { new: true, runValidators: true }
+        ).select('-password');
+
+        if (!user) {
+            res.status(404).json({ message: `User with ID ${id} not found` });
+            return;
+        }
+
+        console.log(`✅ [Admin] Updated user ${id} successfully`);
+        res.status(200).json(user);
+
+    } catch (error: any) {
+        console.error('Error updating user:', error);
+        res.status(500).json({ message: 'Error updating user details', error: error.message });
+    }
+};
+
+/**
+ * Delete User
+ * DELETE /api/users/:id
+ */
+export const deleteUser = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const user = await User.findByIdAndDelete(id);
+
+        if (!user) {
+            res.status(404).json({ message: `User with ID ${id} not found` });
+            return;
+        }
+
+        // Also delete connections
+        await Connection.deleteMany({ userId: id });
+
+        console.log(`✅ [Admin] Deleted user ${id} successfully`);
+        res.status(200).json({ message: 'User deleted successfully', id });
+
+    } catch (error: any) {
+        console.error('Error deleting user:', error);
+        res.status(500).json({ message: 'Error deleting user', error: error.message });
     }
 };
