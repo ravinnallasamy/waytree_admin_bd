@@ -33,7 +33,7 @@ app.use('/api/auth/legacy', authRoutes); // Legacy email/password auth
 app.use('/api/events', eventRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/users', userRoutes); // Alias for plural standard
-app.use('/api/network', networkRoutes);
+app.use('/api/network-codes', networkRoutes); // Standardized to match Mobile App & Frontend
 app.use('/api/event-connections', eventConnectionRoutes); // Event connections API
 
 app.use('/api/admin-users', adminUserRoutes); // Admin User management API
