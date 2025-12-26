@@ -272,9 +272,10 @@ export const toggleBlockUser = async (req: Request, res: Response): Promise<void
 export const updateUserDetails = async (req: Request, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
+        // Updated allowedFields to match Mongoose Schema (photoUrl instead of profileImage)
         const allowedFields = [
             'name', 'role', 'primaryGoal', 'company', 'website',
-            'location', 'oneLiner', 'profileImage', 'interests', 'skills', 'isBlocked'
+            'location', 'oneLiner', 'photoUrl', 'interests', 'skills', 'isBlocked'
         ];
 
         // Filter valid updates
@@ -285,10 +286,14 @@ export const updateUserDetails = async (req: Request, res: Response): Promise<vo
             }
         });
 
-        // Special handling for photoUrl -> profileImage mapping if needed
-        if (req.body.photoUrl && !updates.profileImage) {
-            updates.profileImage = req.body.photoUrl;
+        // Handle frontend potentially sending 'profileImage' instead of 'photoUrl'
+        if (req.body.profileImage && !updates.photoUrl) {
+            updates.photoUrl = req.body.profileImage;
         }
+
+        // Clean up enum fields: if empty string, set to undefined to avoid validation error
+        if (updates.role === "") delete updates.role;
+        if (updates.primaryGoal === "") delete updates.primaryGoal;
 
         const user = await User.findByIdAndUpdate(
             id,
@@ -306,6 +311,17 @@ export const updateUserDetails = async (req: Request, res: Response): Promise<vo
 
     } catch (error: any) {
         console.error('Error updating user:', error);
+
+        // Return 400 for validation errors
+        if (error.name === 'ValidationError') {
+            res.status(400).json({
+                message: 'Validation Error',
+                error: error.message,
+                details: error.errors
+            });
+            return;
+        }
+
         res.status(500).json({ message: 'Error updating user details', error: error.message });
     }
 };
