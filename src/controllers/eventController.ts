@@ -113,7 +113,11 @@ export const createEvent = async (req: Request, res: Response) => {
         const savedEvent = await newEvent.save();
 
         // Generate Embedding after saving (so we have all fields)
+        // Generate Embedding after saving (so we have all fields)
         try {
+            console.log(`📝 [SKIPPED] Embedding generation skipped to prevent OOM on Render Free Tier.`);
+            /* 
+            // Embedding generation disabled for stability on low-memory envs
             console.log(`📝 Generating embedding for new event: "${savedEvent.name}"`);
             const eventText = EmbeddingService.createEventText(savedEvent);
             if (eventText && eventText.trim()) {
@@ -128,6 +132,7 @@ export const createEvent = async (req: Request, res: Response) => {
             } else {
                 console.warn("⚠️ No text content to generate embedding from");
             }
+            */
         } catch (embError) {
             console.error("❌ Failed to generate embedding for new event:", embError);
             // Non-blocking: event is still created even if embedding fails
