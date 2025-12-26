@@ -274,7 +274,7 @@ export const updateUserDetails = async (req: Request, res: Response): Promise<vo
         const { id } = req.params;
         // Updated allowedFields to match Mongoose Schema (photoUrl instead of profileImage)
         const allowedFields = [
-            'name', 'role', 'primaryGoal', 'company', 'website',
+            'name', 'email', 'role', 'primaryGoal', 'company', 'website',
             'location', 'oneLiner', 'photoUrl', 'interests', 'skills', 'isBlocked'
         ];
 
@@ -295,6 +295,8 @@ export const updateUserDetails = async (req: Request, res: Response): Promise<vo
         if (updates.role === "") delete updates.role;
         if (updates.primaryGoal === "") delete updates.primaryGoal;
 
+        console.log(`📝 [Admin] Updating user ${id}. Payload:`, JSON.stringify(updates));
+
         const user = await User.findByIdAndUpdate(
             id,
             { $set: updates },
@@ -310,10 +312,11 @@ export const updateUserDetails = async (req: Request, res: Response): Promise<vo
         res.status(200).json(user);
 
     } catch (error: any) {
-        console.error('Error updating user:', error);
+        console.error('❌ Error updating user:', error);
 
         // Return 400 for validation errors
         if (error.name === 'ValidationError') {
+            console.error('❌ Validation Details:', JSON.stringify(error.errors));
             res.status(400).json({
                 message: 'Validation Error',
                 error: error.message,
