@@ -233,8 +233,32 @@ export const getAllConnections = async (req: Request, res: Response): Promise<vo
 export const getAllNetworkCodes = async (req: Request, res: Response): Promise<void> => {
     console.log('📡 [NETWORK] getAllNetworkCodes: Request received.');
     try {
-        // Fetch all network codes
-        const networkCodes = await NetworkCode.find({}).sort({ createdAt: -1 }).lean();
+        const { verified, search } = req.query;
+        const query: any = {};
+
+        if (verified !== undefined) {
+            if (verified === 'true') {
+                query.isVerified = true;
+            } else {
+                // If verified=false, match explicitly false OR missing (for legacy data)
+                query.$or = [
+                    { isVerified: false },
+                    { isVerified: { $exists: false } }
+                ];
+            }
+        }
+
+        if (search) {
+            const searchRegex = new RegExp(search as string, 'i');
+            query.$or = [
+                { name: searchRegex },
+                { codeId: searchRegex },
+                { description: searchRegex }
+            ];
+        }
+
+        // Fetch network codes
+        const networkCodes = await NetworkCode.find(query).sort({ createdAt: -1 }).lean();
 
         // Aggregate connection counts per codeId (more robust than ObjectId)
         const connectionCounts = await Connection.aggregate([
@@ -437,3 +461,75 @@ export const toggleBlockNetworkCode = async (req: Request, res: Response): Promi
         res.status(500).json({ message: 'Error updating network status', error: error.message });
     }
 };
+
+/**
+ * Approve Network Code
+ * PUT /api/network/:id/approve
+ */
+export const approveNetwork = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const network = await NetworkCode.findByIdAndUpdate(
+            id,
+            { isVerified: true },
+            { new: true }
+        ).lean();
+
+        if (!network) {
+            res.status(404).json({ message: 'Network not found' });
+            return;
+        }
+
+        res.status(200).json({ message: 'Network approved successfully', network });
+    } catch (error: any) {
+        res.status(500).json({ message: 'Error approving network', error: error.message });
+    }
+};
+
+/**
+ * Delete/Reject Network Code
+ * DELETE /api/network/:id
+ */
+export const deleteNetwork = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const network = await NetworkCode.findByIdAndDelete(id);
+
+        if (!network) {
+            res.status(404).json({ message: 'Network not found' });
+            return;
+        }
+
+        res.status(200).json({ message: 'Network deleted successfully' });
+    } catch (error: any) {
+        res.status(500).json({ message: 'Error deleting network', error: error.message });
+    }
+};
+
+/**
+ * PUT /api/network/:id
+ * Update Network Code details
+ */
+export const updateNetworkCode = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const { name, description, qrCodeUrl, isVerified, isBlocked } = req.body;
+
+        const updated = await NetworkCode.findByIdAndUpdate(
+            id,
+            { name, description, qrCodeUrl, isVerified, isBlocked },
+            { new: true }
+        ).lean();
+
+        if (!updated) {
+            res.status(404).json({ message: 'Network code not found' });
+            return;
+        }
+
+        res.status(200).json({ message: 'Network updated successfully', network: updated });
+    } catch (error: any) {
+        res.status(500).json({ message: 'Error updating network', error: error.message });
+    }
+};
+
+export const rejectNetwork = deleteNetwork;

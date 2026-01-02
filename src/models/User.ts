@@ -3,20 +3,15 @@ import mongoose, { Document, Schema } from "mongoose";
 export interface IUser extends Document {
     email: string;
     name: string;
-    role?: "founder" | "investor" | "mentor" | "cxo" | "service" | "other";
-    primaryGoal?:
-    | "fundraising"
-    | "clients"
-    | "cofounder"
-    | "hiring"
-    | "learn"
-    | "other";
+    role?: string;
+    primaryGoal?: string;
     company?: string;
     website?: string;
     location?: string;
     isBlocked?: boolean;
     oneLiner?: string;
     photoUrl?: string;
+    phoneNumber?: string;
     connectionCount: number;
     interests: string[];
     skills: string[];
@@ -42,12 +37,10 @@ const UserSchema = new Schema<IUser>(
         },
         role: {
             type: String,
-            enum: ["founder", "investor", "mentor", "cxo", "service", "other"],
             required: false,
         },
         primaryGoal: {
             type: String,
-            enum: ["fundraising", "clients", "cofounder", "hiring", "learn", "other"],
             required: false,
         },
         company: {
@@ -74,6 +67,10 @@ const UserSchema = new Schema<IUser>(
             type: String,
             trim: true,
         },
+        phoneNumber: {
+            type: String,
+            trim: true,
+        },
         connectionCount: {
             type: Number,
             default: 0,
@@ -88,7 +85,7 @@ const UserSchema = new Schema<IUser>(
         },
         profileEmbedding: {
             type: [Number],
-            select: false, // Don't return by default
+            select: false,
         },
     },
     {
@@ -98,6 +95,4 @@ const UserSchema = new Schema<IUser>(
 
 import { appConnection } from '../config/db';
 
-// ...
-
-export default appConnection.model<IUser>("User", UserSchema);
+export default appConnection.model<IUser>("User", UserSchema, "users");

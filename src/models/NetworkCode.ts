@@ -12,6 +12,7 @@ export interface INetworkCode extends Document {
     expirationTime: Date | null;
     qrCodeUrl: string;
     mediaUrls: string[];
+    isVerified: boolean;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -71,6 +72,11 @@ const NetworkCodeSchema: Schema = new Schema(
                 trim: true,
             },
         ],
+        isVerified: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
     },
     {
         timestamps: true,

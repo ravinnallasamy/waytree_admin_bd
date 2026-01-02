@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import User from '../models/User';
 import Connection from '../models/Connection';
 import bcrypt from 'bcryptjs';
+import { uploadToS3 } from '../services/s3Service';
 
 // Register a user
 export const registerUser = async (req: Request, res: Response): Promise<void> => {
@@ -178,15 +179,22 @@ export const getAllUsersPaginated = async (req: Request, res: Response): Promise
 
         // Build query
         let query: any = {};
+        const { nonBlockedOnly } = req.query;
+
+        if (nonBlockedOnly === 'true') {
+            query.isBlocked = { $ne: true };
+        }
+
         if (search && typeof search === 'string' && search.trim() !== '') {
             console.log('🔍 Search term:', search);
-            query = {
+            query.$and = query.$and || [];
+            query.$and.push({
                 $or: [
                     { name: { $regex: search, $options: 'i' } },
                     { email: { $regex: search, $options: 'i' } },
                     { company: { $regex: search, $options: 'i' } }
                 ]
-            };
+            });
         }
 
         console.log('📊 Query:', JSON.stringify(query));
@@ -294,6 +302,25 @@ export const updateUserDetails = async (req: Request, res: Response): Promise<vo
         // Clean up enum fields: if empty string, set to undefined to avoid validation error
         if (updates.role === "") delete updates.role;
         if (updates.primaryGoal === "") delete updates.primaryGoal;
+
+        // HANDLE S3 UPLOAD FOR ADMIN-LED USER UPDATE
+        if (updates.photoUrl && updates.photoUrl.startsWith('data:image')) {
+            try {
+                console.log(`📡 [ADMIN-USER] Uploading updated profile image to S3 for user: ${id}`);
+                const matches = updates.photoUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                if (matches && matches.length === 3) {
+                    const contentType = matches[1];
+                    const buffer = Buffer.from(matches[2], 'base64');
+                    const extension = contentType.split('/')[1] || 'png';
+                    const fileName = `admin_update_${id}_${Date.now()}.${extension}`;
+
+                    updates.photoUrl = await uploadToS3(buffer, fileName, contentType, 'profiles');
+                    console.log(`✅ [ADMIN-USER] S3 URL stored: ${updates.photoUrl}`);
+                }
+            } catch (err) {
+                console.error("❌ [ADMIN-USER] S3 upload failed during admin update", err);
+            }
+        }
 
         console.log(`📝 [Admin] Updating user ${id}. Payload:`, JSON.stringify(updates));
 

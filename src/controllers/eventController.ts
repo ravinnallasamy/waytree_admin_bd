@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import Event from '../models/Event';
-import { uploadToCloudinary } from '../services/uploadService';
+import { uploadToS3 } from '../services/s3Service';
 import { EmbeddingService } from '../services/embeddingService';
+import { PdfService } from '../services/pdfService';
+import { RagPipelineService } from '../services/ragPipelineService';
 
 // Extend Request interface to include files from multer
 interface MulterRequest extends Request {
@@ -21,125 +23,60 @@ export const createEvent = async (req: Request, res: Response) => {
         // Handle Image Uploads
         const imageUrls: string[] = [];
 
-        // Case 1: Multer files (if frontend uses FormData)
+        // Case 1: Multer files
         if (multerReq.files && Array.isArray(multerReq.files) && multerReq.files.length > 0) {
-            const uploadPromises = multerReq.files.map(file => uploadToCloudinary(file.buffer, 'events'));
+            console.log(`📡 [EVENT] Uploading ${multerReq.files.length} files from multer to S3...`);
+            const uploadPromises = multerReq.files.map(file =>
+                uploadToS3(file.buffer, file.originalname, file.mimetype, 'events')
+            );
             const results = await Promise.all(uploadPromises);
             imageUrls.push(...results);
         }
-        // Case 2: Base64 strings in body (current frontend)
+        // Case 2: Base64
         else if (req.body.images && Array.isArray(req.body.images)) {
             const uploadPromises = req.body.images.map(async (imgObj: any) => {
-                let base64Data = '';
-                if (typeof imgObj === 'string') {
-                    base64Data = imgObj;
-                } else if (imgObj.preview) {
-                    base64Data = imgObj.preview;
-                }
-
-                if (base64Data.startsWith('data:image')) {
-                    // Try to upload to Cloudinary if configured
-                    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-                        try {
-                            // Remove prefix "data:image/png;base64,"
-                            const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-                            if (matches && matches.length === 3) {
-                                const buffer = Buffer.from(matches[2], 'base64');
-                                return await uploadToCloudinary(buffer, 'events');
-                            }
-                        } catch (err) {
-                            console.error("Cloudinary upload failed, falling back to Base64 storage", err);
-                            return base64Data; // Fallback
+                let base64Data = typeof imgObj === 'string' ? imgObj : imgObj.preview;
+                if (base64Data && base64Data.startsWith('data:image')) {
+                    try {
+                        const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                        if (matches && matches.length === 3) {
+                            const contentType = matches[1];
+                            const buffer = Buffer.from(matches[2], 'base64');
+                            const extension = contentType.split('/')[1] || 'png';
+                            const fileName = `image_${Date.now()}.${extension}`;
+                            return await uploadToS3(buffer, fileName, contentType, 'events');
                         }
+                    } catch (err) {
+                        return base64Data;
                     }
-                    // If no Cloudinary, return Base64 string directly
-                    return base64Data;
                 }
                 return null;
             });
-
             const results = await Promise.all(uploadPromises);
-            // Filter out nulls and push to imageUrls
-            results.forEach(url => {
-                if (url) imageUrls.push(url);
-            });
+            results.forEach(url => { if (url) imageUrls.push(url); });
         }
-
-        // Handle Date Time
-        // If date and time are separate, combine them. If dateTime is provided, use it.
-        let eventDateTime: Date;
-        if (date && time) {
-            eventDateTime = new Date(`${date}T${time}`);
-        } else if (req.body.dateTime) {
-            eventDateTime = new Date(req.body.dateTime);
-        } else {
-            eventDateTime = new Date(); // Fallback
-        }
-
-        // Handle Tags (parse if stringified JSON or comma separated)
-        let parsedTags: string[] = [];
-        if (typeof tags === 'string') {
-            try {
-                parsedTags = JSON.parse(tags);
-            } catch (e) {
-                parsedTags = tags.split(',').map(t => t.trim());
-            }
-        } else if (Array.isArray(tags)) {
-            parsedTags = tags;
-        }
-
-        // Handle CreatedBy - Use provided ID or generate a dummy one if not authenticated
-        // In a real app, this should come from req.user._id
-        const userId = createdBy && mongoose.Types.ObjectId.isValid(createdBy)
-            ? createdBy
-            : new mongoose.Types.ObjectId();
 
         const newEvent = new Event({
-            name: title || req.body.name, // Support both title (frontend) and name (schema)
-            headline: headline || req.body.headline, // Include headline
+            name: title || req.body.name,
+            headline: headline || req.body.headline,
             description,
-            dateTime: eventDateTime,
+            dateTime: req.body.isCommunity ? undefined : (date && time ? new Date(`${date}T${time}`) : (req.body.dateTime ? new Date(req.body.dateTime) : new Date())),
             location,
-            tags: parsedTags,
+            tags: Array.isArray(tags) ? tags : (typeof tags === 'string' ? tags.split(',').map(t => t.trim()) : []),
             photos: imageUrls,
-            videos: req.body.video && req.body.video.preview ? [req.body.video.preview] : [], // Map single video to array
-            attachments: req.body.attachments || [],
-            createdBy: userId,
-            isVerified: req.body.status === 'verified', // Set based on status from frontend
-            isActive: true // Explicitly set to true
+            pdfFiles: req.body.pdfFiles || [],
+            createdBy: createdBy || new mongoose.Types.ObjectId(),
+            isEvent: req.body.isEvent !== undefined ? req.body.isEvent : !req.query.isCommunity,
+            isCommunity: req.body.isCommunity !== undefined ? req.body.isCommunity : false,
+            isVerified: false, // Creation ALWAYS starts as unverified to save cost
+            isActive: true
         });
 
-        // Save event first to get the ID
         const savedEvent = await newEvent.save();
-
-        // Generate Embedding after saving (so we have all fields)
-        // Generate Embedding after saving (so we have all fields)
-        try {
-            console.log(`📝 [SKIPPED] Embedding generation skipped to prevent OOM on Render Free Tier.`);
-            /* 
-            // Embedding generation disabled for stability on low-memory envs
-            console.log(`📝 Generating embedding for new event: "${savedEvent.name}"`);
-            const eventText = EmbeddingService.createEventText(savedEvent);
-            if (eventText && eventText.trim()) {
-                const embedding = await EmbeddingService.generateEmbedding(eventText);
-                if (embedding && embedding.length > 0) {
-                    savedEvent.eventEmbedding = embedding;
-                    await savedEvent.save();
-                    console.log("✅ Event embedding generated and saved successfully");
-                } else {
-                    console.warn("⚠️ Embedding generation returned empty array");
-                }
-            } else {
-                console.warn("⚠️ No text content to generate embedding from");
-            }
-            */
-        } catch (embError) {
-            console.error("❌ Failed to generate embedding for new event:", embError);
-            // Non-blocking: event is still created even if embedding fails
-        }
+        console.log(`✅ [EVENT] Created unverified event: ${savedEvent.name}. Embeddings TBD on approval.`);
 
         res.status(201).json({
-            message: 'Event created successfully',
+            message: 'Event created successfully (Unverified)',
             event: savedEvent
         });
     } catch (error: any) {
@@ -167,6 +104,13 @@ const getEventsInternal = async (req: Request, res: Response, verifiedOverride?:
         const query: any = {};
         if (verified !== undefined) {
             query.isVerified = verified === 'true';
+        }
+
+        if (req.query.isEvent !== undefined) {
+            query.isEvent = req.query.isEvent === 'true';
+        }
+        if (req.query.isCommunity !== undefined) {
+            query.isCommunity = req.query.isCommunity === 'true';
         }
 
         // Filter by isActive unless explicitly requested to include disabled
@@ -214,7 +158,7 @@ const getEventsInternal = async (req: Request, res: Response, verifiedOverride?:
 
         // Optimized Query: lean(), select(), pagination
         const events = await Event.find(query)
-            .select('name headline description dateTime location photos isVerified isActive tags createdBy') // Select necessary fields including creator
+            .select('name headline description dateTime location photos isVerified isActive tags createdBy isEvent isCommunity pdfFiles')
             .populate('createdBy', 'name email photoUrl') // Populate creator details
             .sort({ dateTime: 1 }) // Sort by upcoming events
             .skip(skip)
@@ -319,24 +263,96 @@ export const getPendingEvents = async (req: Request, res: Response) => {
 };
 
 /**
- * Approve event
+ * Approve event & Trigger RAG Pipeline
  * PUT /api/events/approve/:id
  */
 export const approveEvent = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const event = await Event.findByIdAndUpdate(
-            id,
-            { isVerified: true },
-            { new: true }
-        ).lean();
+        console.log(`🎯 [ADMIN-APPROVE] Approving event: ${id}`);
 
-        if (!event) {
+        const baseEvent = await Event.findById(id);
+        if (!baseEvent) {
             return res.status(404).json({ message: 'Event not found' });
         }
 
-        res.status(200).json({ message: 'Event approved successfully', event });
+        if (baseEvent.isVerified) {
+            return res.status(400).json({ message: 'Event is already verified' });
+        }
+
+        // 1. PDF EXTRACTION & RAG PIPELINE
+        let pdfChunks: any[] = [];
+        let pdfExtractedTexts: string[] = [];
+
+        if (baseEvent.pdfFiles && baseEvent.pdfFiles.length > 0) {
+            try {
+                console.log(`📄 [ADMIN-APPROVE] Processing ${baseEvent.pdfFiles.length} PDFs...`);
+
+                // Extract unique texts for embedding
+                for (const pdfUrl of baseEvent.pdfFiles) {
+                    if (PdfService.isValidPdf(pdfUrl)) {
+                        const text = await PdfService.extractTextFromPdf(pdfUrl);
+                        pdfExtractedTexts.push(text);
+                    }
+                }
+
+                // Run Python RAG Pipeline
+                pdfChunks = await RagPipelineService.processMultiplePdfs(baseEvent.pdfFiles);
+                console.log(`✅ [ADMIN-APPROVE] RAG Pipeline completed with ${pdfChunks.length} chunks.`);
+            } catch (ragErr) {
+                console.error("❌ [ADMIN-APPROVE] PDF/RAG Processing failed:", ragErr);
+                // We proceed even if RAG fails (fallback to basic embeddings)
+            }
+        }
+
+        // 2. GENERATE DUAL EMBEDDINGS (using Gemini via EmbeddingService)
+        let eventEmbedding: number[] = [];
+        let metadataEmbedding: number[] = [];
+
+        try {
+            console.log('📝 [ADMIN-APPROVE] Generating Gemini embeddings...');
+            const tempObj = {
+                ...baseEvent.toObject(),
+                pdfExtractedTexts
+            };
+
+            const metadataText = EmbeddingService.createEventMetadataText(tempObj);
+            const eventText = EmbeddingService.createEventText(tempObj);
+
+            if (metadataText === eventText) {
+                const sharedEmbedding = await EmbeddingService.generateEmbedding(metadataText);
+                eventEmbedding = sharedEmbedding;
+                metadataEmbedding = sharedEmbedding;
+            } else {
+                eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
+                metadataEmbedding = await EmbeddingService.generateEmbedding(metadataText);
+            }
+        } catch (embErr) {
+            console.error("❌ [ADMIN-APPROVE] Embedding generation failed:", embErr);
+        }
+
+        // 3. UPDATE DOCUMENT
+        const updatedEvent = await Event.findByIdAndUpdate(
+            id,
+            {
+                isVerified: true,
+                eventEmbedding,
+                metadataEmbedding,
+                pdfChunks,
+                pdfExtractedTexts,
+                isActive: true
+            },
+            { new: true }
+        );
+
+        console.log(`✅ [ADMIN-APPROVE] Event "${updatedEvent?.name}" approved and semantic pipeline finished.`);
+
+        res.status(200).json({
+            message: 'Event approved and RAG pipeline processed successfully',
+            event: updatedEvent
+        });
     } catch (error: any) {
+        console.error('❌ [ADMIN-APPROVE] Error in approval process:', error);
         res.status(500).json({ message: 'Error approving event', error: error.message });
     }
 };

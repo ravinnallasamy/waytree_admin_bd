@@ -1,57 +1,41 @@
-import { pipeline } from "@xenova/transformers";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
 
-// Type definition for the pipeline function
-type FeatureExtractionPipeline = (text: string | string[], options?: any) => Promise<any>;
+dotenv.config();
 
-// Singleton to hold the pipeline instance
-let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;
-
-// Function to get or initialize the pipeline
-const getExtractor = (): Promise<FeatureExtractionPipeline> => {
-    if (!extractorPromise) {
-        // We use all-mpnet-base-v2 which produces 768-dim embeddings
-        // This matches our MongoDB vector index configuration.
-        // The model is downloaded automatically on first use.
-        console.log("Loading local embedding model (Xenova/all-mpnet-base-v2)...");
-        extractorPromise = pipeline("feature-extraction", "Xenova/all-mpnet-base-v2");
-    }
-    return extractorPromise;
-};
+// Initialize Gemini Client
+const apiKey = process.env.GEMINI_API_KEY;
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export const EmbeddingService = {
     /**
-     * Generates a text embedding using local 'all-mpnet-base-v2' model.
+     * Generates a text embedding using Gemini 'text-embedding-004'.
      * Dimensions: 768
      */
     generateEmbedding: async (text: string): Promise<number[]> => {
         try {
             if (!text || !text.trim()) {
-                console.log("ℹ️ No text to embed");
+                console.log("ℹ️ [EMBEDDING] No text to embed");
                 return [];
             }
 
-            const extractor = await getExtractor();
+            if (!genAI) {
+                console.error("❌ [EMBEDDING] GEMINI_API_KEY is missing in Admin Backend. Check .env");
+                return [];
+            }
 
-            // Generate embedding
-            // pooling: 'mean' averages the token embeddings to get a single sentence embedding
-            // normalize: true ensures the vector has length 1 (good for cosine similarity)
-            const output = await extractor(text, { pooling: "mean", normalize: true });
+            const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+            const result = await model.embedContent(text);
+            const embedding = result.embedding.values;
 
-            // Convert Tensor to plain array
-            // output.data is a Float32Array
-            const embedding = Array.from(output.data) as number[];
-
+            console.log(`✅ [EMBEDDING] Generated Gemini embedding (${embedding.length} dims)`);
             return embedding;
         } catch (error) {
-            console.error("Error generating local embedding:", error);
-            throw error;
+            console.error("❌ [EMBEDDING] Error generating Gemini embedding:", error);
+            return [];
         }
     },
 
-    /**
-     * Creates a composite text string from user profile fields.
-     * Semantic fields: interests, skills, role, primaryGoal, location
-     */
     createUserProfileText: (user: any): string => {
         const parts = [
             user.interests?.join(", "),
@@ -59,16 +43,13 @@ export const EmbeddingService = {
             user.role,
             user.primaryGoal,
             user.location,
+            user.company,
+            user.oneLiner
         ].filter(Boolean);
-
         return parts.join(". ");
     },
 
-    /**
-     * Creates a composite text string from event fields.
-     * Semantic fields: name, description, tags, location, headline
-     */
-    createEventText: (event: any): string => {
+    createEventMetadataText: (event: any): string => {
         const parts = [
             event.name,
             event.headline,
@@ -76,7 +57,18 @@ export const EmbeddingService = {
             event.tags?.join(", "),
             event.location
         ].filter(Boolean);
+        return parts.join(". ");
+    },
 
+    createEventText: (event: any): string => {
+        const parts = [
+            event.name,
+            event.headline,
+            event.description,
+            event.tags?.join(", "),
+            event.location,
+            ...(event.pdfExtractedTexts || [])
+        ].filter(Boolean);
         return parts.join(". ");
     }
 };

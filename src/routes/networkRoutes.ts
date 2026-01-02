@@ -10,6 +10,9 @@ import {
     getConnectionsByCodeId,
     debugNetwork,
     toggleBlockNetworkCode,
+    approveNetwork,
+    deleteNetwork,
+    updateNetworkCode,
 } from '../controllers/networkController';
 
 import { protect, admin } from '../middleware/authMiddleware';
@@ -26,5 +29,8 @@ router.get('/:code/users', protect, admin, getNetworkUsers);
 router.put('/block/:connectionId', protect, admin, blockUser);
 router.put('/unblock/:connectionId', protect, admin, unblockUser);
 router.put('/:id/toggle-block', protect, admin, toggleBlockNetworkCode);
+router.put('/:id/approve', protect, admin, approveNetwork);
+router.put('/:id', protect, admin, updateNetworkCode);
+router.delete('/:id', protect, admin, deleteNetwork);
 
 export default router;

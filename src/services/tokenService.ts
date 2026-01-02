@@ -16,7 +16,7 @@ export const generateAccessToken = (userId: string, email: string): string => {
   };
 
   return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: "15m", // 15 minutes
+    expiresIn: "1d", // Extended to 1 day to reduce refresh frequency
   });
 };
 
@@ -74,6 +74,15 @@ export const verifyRefreshToken = async (
     if (!refreshToken) {
       return null;
     }
+
+    // SLIDING EXPIRATION: Extend the token life whenever it's used
+    let refreshTokenDays = 30;
+    if (process.env.REFRESH_TOKEN_EXPIRE) {
+      const days = parseInt(process.env.REFRESH_TOKEN_EXPIRE.replace('d', ''));
+      if (!isNaN(days)) refreshTokenDays = days;
+    }
+    refreshToken.expiresAt = new Date(Date.now() + refreshTokenDays * 24 * 60 * 60 * 1000);
+    await refreshToken.save();
 
     const user = await AdminUser.findById(refreshToken.userId).select("email");
     if (!user) {
