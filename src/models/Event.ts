@@ -15,6 +15,7 @@ export interface IEvent extends Document {
     isCommunity: boolean;
     isVerified: boolean;
     isActive: boolean;
+    isAdmin: boolean;
     createdBy: mongoose.Types.ObjectId;
     attendees: mongoose.Types.ObjectId[];
     metadataEmbedding?: number[];
@@ -98,6 +99,10 @@ const eventSchema: Schema = new Schema(
         isActive: {
             type: Boolean,
             default: true,
+        },
+        isAdmin: {
+            type: Boolean,
+            default: false,
         },
         createdBy: {
             type: mongoose.Schema.Types.ObjectId,

@@ -8,6 +8,18 @@ export interface IAdminUser extends Document {
     name?: string;
     photoUrl?: string;
     role: 'admin' | 'superadmin';
+    preferences?: {
+        theme: 'light' | 'dark' | 'system';
+        notifications: {
+            email: boolean;
+            inApp: boolean;
+            marketing: boolean;
+        };
+        ui: {
+            density: 'comfortable' | 'compact';
+            sidebarCollapsed: boolean;
+        };
+    };
     createdAt: Date;
     updatedAt: Date;
     matchPassword(enteredPassword: string): Promise<boolean>;
@@ -43,6 +55,25 @@ const AdminUserSchema: Schema = new Schema(
         timestamps: true,
     }
 );
+
+AdminUserSchema.add({
+    preferences: {
+        theme: {
+            type: String,
+            enum: ['light', 'dark', 'system'],
+            default: 'system'
+        },
+        notifications: {
+            email: { type: Boolean, default: true },
+            inApp: { type: Boolean, default: true },
+            marketing: { type: Boolean, default: false }
+        },
+        ui: {
+            density: { type: String, enum: ['comfortable', 'compact'], default: 'comfortable' },
+            sidebarCollapsed: { type: Boolean, default: false }
+        }
+    }
+});
 
 // Match user entered password to hashed password in database
 AdminUserSchema.methods.matchPassword = async function (enteredPassword: string): Promise<boolean> {

@@ -1,16 +1,30 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
-dotenv.config();
+import path from 'path';
 
-const adminOptions = {
-    dbName: 'admin_panel'
-};
+// Try loading .env from current directory (default) and parent (just in case)
+dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+console.log('🔌 Debug: Loading DB Config...');
+const adminUri = process.env.ADMIN_DB_URI || process.env.MONGO_URI || process.env.MONGODB_URI;
+const appUri = process.env.APP_DB_URI || process.env.MONGO_URI || process.env.MONGODB_URI;
+
+console.log('🔌 Admin DB URI:', adminUri ? 'Found' : 'MISSING');
+console.log('🔌 App DB URI:', appUri ? 'Found' : 'MISSING');
+
+if (!adminUri) {
+    throw new Error('❌ FATAL: ADMIN_DB_URI is not defined in .env');
+}
+
+if (!appUri) {
+    console.warn('⚠️ WARNING: APP_DB_URI is not defined. Using Admin URI or failing.');
+}
 
 // Connections
-// We remove hardcoded dbNames so they use what's specified in the .env URIs
-export const adminConnection = mongoose.createConnection(process.env.ADMIN_DB_URI || '');
-export const appConnection = mongoose.createConnection(process.env.APP_DB_URI || '');
+export const adminConnection = mongoose.createConnection(adminUri as string);
+export const appConnection = mongoose.createConnection(appUri || (adminUri as string));
 
 // Event listeners
 adminConnection.on('connected', () => {

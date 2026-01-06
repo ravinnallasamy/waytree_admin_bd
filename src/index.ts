@@ -15,6 +15,8 @@ import networkRoutes from './routes/networkRoutes';
 
 import adminUserRoutes from './routes/adminUserRoutes';
 import eventConnectionRoutes from './routes/eventConnectionRoutes';
+import dashboardRoutes from './routes/dashboardRoutes'; // NEW
+import settingsRoutes from './routes/settingsRoutes'; // NEW
 
 dotenv.config();
 
@@ -37,6 +39,8 @@ app.use('/api/network-codes', networkRoutes); // Standardized to match Mobile Ap
 app.use('/api/event-connections', eventConnectionRoutes); // Event connections API
 
 app.use('/api/admin-users', adminUserRoutes); // Admin User management API
+app.use('/api/dashboard', dashboardRoutes); // Admin Dashboard API
+app.use('/api/settings', settingsRoutes); // Settings API
 
 // Base route
 app.get('/', (req, res) => {

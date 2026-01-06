@@ -9,37 +9,85 @@ export class PdfService {
      * The app currently sends Base64 or URLs. 
      * Let's support both if possible, but primarily Base64 based on the app's current flow.
      */
-    static async extractTextFromPdf(pdfInput: string): Promise<string> {
+    static async extractText(fileUrl: string): Promise<string> {
+        // Dispatch based on extension
+        if (fileUrl.match(/\.(xlsx|xls)$/i)) {
+            return this.extractTextFromExcel(fileUrl);
+        } else if (fileUrl.match(/\.(pdf)$/i)) {
+            return this.extractTextFromPdf(fileUrl);
+        } else if (fileUrl.match(/\.(txt)$/i)) {
+            return this.extractTextFromTxt(fileUrl);
+        } else {
+            // Default/Fallback
+            console.warn(`[ADMIN] Unsupported file type for extraction: ${fileUrl}. Returning empty text.`);
+            return "";
+        }
+    }
+
+    static async extractTextFromPdf(pdfUrl: string): Promise<string> {
         try {
-            console.log('📄 [ADMIN] Starting PDF extraction...');
+            console.log('📄 [ADMIN] Starting PDF extraction from URL:', pdfUrl);
+            const pdfBuffer = await this.downloadFile(pdfUrl);
 
-            let pdfBuffer: Buffer;
-
-            if (pdfInput.startsWith('http')) {
-                // Fetch from S3/URL
-                const response = await fetch(pdfInput);
-                const arrayBuffer = await response.arrayBuffer();
-                pdfBuffer = Buffer.from(arrayBuffer);
-            } else {
-                // Handle Base64
-                const base64Data = pdfInput.includes(',')
-                    ? pdfInput.split(',')[1]
-                    : pdfInput;
-                pdfBuffer = Buffer.from(base64Data, 'base64');
-            }
-
+            // PDF Validation
             if (!pdfBuffer.toString('utf8', 0, 5).startsWith('%PDF')) {
-                throw new Error('Invalid PDF format');
+                // Warning only, sometimes signatures vary
+                console.warn('⚠️ [ADMIN] Document header does not match %PDF');
             }
 
-            const data = await pdfParse(pdfBuffer);
-            const extractedText = data.text;
+            let parser = pdfParse;
+            // ... (keep existing parser resolution logic if needed, or simplify) ...
+            if (typeof parser !== 'function' && parser.default) parser = parser.default;
 
-            return this.cleanText(extractedText);
+            const data = await parser(pdfBuffer);
+            return this.cleanText(data.text);
         } catch (error: any) {
             console.error('❌ [ADMIN] PDF extraction error:', error.message);
             throw new Error(`Failed to process PDF: ${error.message}`);
         }
+    }
+
+    static async extractTextFromExcel(url: string): Promise<string> {
+        try {
+            const XLSX = require('xlsx');
+            console.log('📊 [ADMIN] Starting Excel extraction from URL:', url);
+            const buffer = await this.downloadFile(url);
+
+            const workbook = XLSX.read(buffer, { type: 'buffer' });
+            let fullText = "";
+
+            workbook.SheetNames.forEach((sheetName: string) => {
+                const sheet = workbook.Sheets[sheetName];
+                // Convert to CSV to preserve structure (Row1,Col1,Col2...)
+                const csv = XLSX.utils.sheet_to_csv(sheet);
+                if (csv && csv.trim().length > 0) {
+                    fullText += `\n--- Sheet: ${sheetName} ---\n${csv}`;
+                }
+            });
+
+            return fullText.trim();
+        } catch (error: any) {
+            console.error("❌ [ADMIN] Excel extraction failed:", error);
+            return "";
+        }
+    }
+
+    static async extractTextFromTxt(url: string): Promise<string> {
+        try {
+            const buffer = await this.downloadFile(url);
+            return buffer.toString('utf-8');
+        } catch (e) { return ""; }
+    }
+
+    private static async downloadFile(url: string): Promise<Buffer> {
+        // Only allow HTTP/HTTPS URLs (Strict S3/Web enforcement)
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Failed to fetch file: ${response.statusText}`);
+            const arrayBuffer = await response.arrayBuffer();
+            return Buffer.from(arrayBuffer);
+        }
+        throw new Error('Invalid input: URL required.');
     }
 
     private static cleanText(text: string): string {
@@ -52,14 +100,15 @@ export class PdfService {
         return cleaned.trim();
     }
 
-    static isValidPdf(pdfInput: string): boolean {
-        try {
-            if (pdfInput.startsWith('http')) return pdfInput.toLowerCase().endsWith('.pdf');
-            const base64Data = pdfInput.includes(',') ? pdfInput.split(',')[1] : pdfInput;
-            const buffer = Buffer.from(base64Data, 'base64');
-            return buffer.toString('utf8', 0, 4) === '%PDF';
-        } catch {
-            return false;
-        }
+    static isValidDocument(fileInput: string): boolean {
+        const p = fileInput.toLowerCase();
+        return (p.startsWith('http')) &&
+            (p.endsWith('.pdf') || p.endsWith('.xlsx') || p.endsWith('.xls') || p.endsWith('.txt'));
     }
+
+    // Kept for backward compatibility if needed, but redirects to isValidDocument logical check
+    static isValidPdf(pdfInput: string): boolean {
+        return this.isValidDocument(pdfInput);
+    }
+
 }
