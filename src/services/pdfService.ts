@@ -1,4 +1,4 @@
-const pdfParse = require("pdf-parse");
+const pdfParse: any = require("pdf-parse");
 
 /**
  * PDF Service for text extraction (Admin Port)
@@ -24,6 +24,7 @@ export class PdfService {
         }
     }
 
+
     static async extractTextFromPdf(pdfUrl: string): Promise<string> {
         try {
             console.log('📄 [ADMIN] Starting PDF extraction from URL:', pdfUrl);
@@ -36,8 +37,21 @@ export class PdfService {
             }
 
             let parser = pdfParse;
-            // ... (keep existing parser resolution logic if needed, or simplify) ...
-            if (typeof parser !== 'function' && parser.default) parser = parser.default;
+            console.log('   - [DEBUG] parser type:', typeof parser);
+
+            // Handle ES Module / CommonJS interop issues manually
+            if (typeof parser !== 'function') {
+                if (parser.default && typeof parser.default === 'function') {
+                    console.log('   - [DEBUG] Using parser.default');
+                    parser = parser.default;
+                } else {
+                    console.log('   - [DEBUG] parser is object but no .default function. Keys:', Object.keys(parser));
+                }
+            }
+
+            if (typeof parser !== 'function') {
+                throw new Error(`pdf-parse library is not a function. Type: ${typeof parser}`);
+            }
 
             const data = await parser(pdfBuffer);
             return this.cleanText(data.text);
@@ -49,7 +63,7 @@ export class PdfService {
 
     static async extractTextFromExcel(url: string): Promise<string> {
         try {
-            const XLSX = require('xlsx');
+            const XLSX: any = require('xlsx');
             console.log('📊 [ADMIN] Starting Excel extraction from URL:', url);
             const buffer = await this.downloadFile(url);
 
