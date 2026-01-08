@@ -36,25 +36,55 @@ export class PdfService {
                 console.warn('⚠️ [ADMIN] Document header does not match %PDF');
             }
 
-            let parser = pdfParse;
-            console.log('   - [DEBUG] parser type:', typeof parser);
+            let parserLib = pdfParse;
 
-            // Handle ES Module / CommonJS interop issues manually
-            if (typeof parser !== 'function') {
-                if (parser.default && typeof parser.default === 'function') {
-                    console.log('   - [DEBUG] Using parser.default');
-                    parser = parser.default;
-                } else {
-                    console.log('   - [DEBUG] parser is object but no .default function. Keys:', Object.keys(parser));
+            // Strategy 1: Standard v1 Function
+            if (typeof parserLib === 'function') {
+                const data = await parserLib(pdfBuffer);
+                return this.cleanText(data.text);
+            }
+
+            // Strategy 2: v2 Class (PDFParse property)
+            if (parserLib.PDFParse && typeof parserLib.PDFParse === 'function') {
+                const dataBytes = new Uint8Array(pdfBuffer);
+
+                try {
+                    console.log('   - [RESOLVE] Found PDFParse class. Attempting v2 class-based extraction.');
+                    // Strategy A: Instantiate -> Load with data object (standard pdf.js pattern)
+                    const parser = new parserLib.PDFParse({ verbosity: 0 });
+                    await parser.load({ data: dataBytes });
+
+                    const text = await parser.getText();
+                    const rawText = (typeof text === 'string') ? text : (text.text || "");
+                    return this.cleanText(rawText);
+                } catch (classErr: any) {
+                    console.error("   - [WARN] Class Strategy A (load) failed:", classErr.message);
+
+                    // Fallback Strategy B: Constructor Data directly (with Uint8Array)
+                    try {
+                        console.log('   - [DEBUG] Trying Strategy B (Constructor + Uint8Array)...');
+                        const parser = new parserLib.PDFParse(dataBytes);
+
+                        if (typeof parser.getText === 'function') {
+                            const text = await parser.getText();
+                            const rawText = (typeof text === 'string') ? text : (text.text || "");
+                            return this.cleanText(rawText);
+                        }
+                        throw new Error("Constructor accepted data but no getText method found.");
+                    } catch (classErrB: any) {
+                        console.error("   - [WARN] Class Strategy B (Constructor) failed:", classErrB.message);
+                        throw new Error(`All PDFParse class strategies failed. Original error: ${classErr.message}`);
+                    }
                 }
             }
 
-            if (typeof parser !== 'function') {
-                throw new Error(`pdf-parse library is not a function. Type: ${typeof parser}`);
+            // Strategy 3: ESM Default
+            if (parserLib.default && typeof parserLib.default === 'function') {
+                const data = await parserLib.default(pdfBuffer);
+                return this.cleanText(data.text);
             }
 
-            const data = await parser(pdfBuffer);
-            return this.cleanText(data.text);
+            throw new Error(`Unsupported pdf-parse library structure. Keys: ${Object.keys(parserLib).join(', ')}`);
         } catch (error: any) {
             console.error('❌ [ADMIN] PDF extraction error:', error.message);
             throw new Error(`Failed to process PDF: ${error.message}`);
@@ -94,14 +124,41 @@ export class PdfService {
     }
 
     private static async downloadFile(url: string): Promise<Buffer> {
-        // Only allow HTTP/HTTPS URLs (Strict S3/Web enforcement)
-        if (url.startsWith('http://') || url.startsWith('https://')) {
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Failed to fetch file: ${response.statusText}`);
-            const arrayBuffer = await response.arrayBuffer();
-            return Buffer.from(arrayBuffer);
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            throw new Error("Invalid input: URL required.");
         }
-        throw new Error('Invalid input: URL required.');
+
+        const client = url.startsWith("https") ? require("https") : require("http");
+
+        return new Promise((resolve, reject) => {
+            const req = client.get(url, {
+                headers: {
+                    'User-Agent': 'Waytree-Admin-Backend/1.0'
+                }
+            }, (res: any) => {
+                // Follow redirects
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    return this.downloadFile(res.headers.location).then(resolve).catch(reject);
+                }
+
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    return reject(new Error(`Failed to download file (${res.statusCode}): ${res.statusMessage}`));
+                }
+
+                const data: any[] = [];
+                res.on("data", (chunk: any) => data.push(chunk));
+                res.on("end", () => resolve(Buffer.concat(data)));
+            });
+
+            req.on("error", (err: any) => {
+                reject(new Error(`Network error downloading file: ${err.message}`));
+            });
+
+            req.setTimeout(15000, () => {
+                req.destroy();
+                reject(new Error("Request timeout"));
+            });
+        });
     }
 
     private static cleanText(text: string): string {

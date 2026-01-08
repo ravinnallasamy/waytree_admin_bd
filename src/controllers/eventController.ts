@@ -117,9 +117,10 @@ export const createEvent = async (req: Request, res: Response) => {
                 `.trim().substring(0, 8000); // Truncate safety
                 eventEmbedding = await EmbeddingService.generateEmbedding(combinedText);
 
-                console.log("✅ [ADMIN] Embeddings generated successfully.");
+                console.log("✅ [ADMIN] Embeddings generated successfully. Dimensions:", eventEmbedding.length);
             } catch (err: any) {
-                console.error("❌ [ADMIN] Embedding generation failed:", err);
+                console.error("❌ [ADMIN] Embedding generation failed:", err.message);
+                console.error("   Stack:", err.stack);
                 // Continue saving event even if embeddings fail, but log it
             }
         }
@@ -420,8 +421,9 @@ export const approveEvent = async (req: Request, res: Response) => {
                 // Run Python RAG Pipeline
                 pdfChunks = await RagPipelineService.processMultiplePdfs(baseEvent.pdfFiles);
                 console.log(`✅ [ADMIN-APPROVE] RAG Pipeline completed with ${pdfChunks.length} chunks.`);
-            } catch (ragErr) {
-                console.error("❌ [ADMIN-APPROVE] PDF/RAG Processing failed:", ragErr);
+            } catch (ragErr: any) {
+                console.error("❌ [ADMIN-APPROVE] PDF/RAG Processing failed:", ragErr.message);
+                console.error("   Stack:", ragErr.stack);
                 // We proceed even if RAG fails (fallback to basic embeddings)
             }
         }
@@ -444,12 +446,16 @@ export const approveEvent = async (req: Request, res: Response) => {
                 const sharedEmbedding = await EmbeddingService.generateEmbedding(metadataText);
                 eventEmbedding = sharedEmbedding;
                 metadataEmbedding = sharedEmbedding;
+                console.log(`✅ [ADMIN-APPROVE] Shared Embedding created (Size: ${sharedEmbedding.length})`);
             } else {
                 eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
+                console.log(`✅ [ADMIN-APPROVE] Event Embedding created (Size: ${eventEmbedding.length})`);
                 metadataEmbedding = await EmbeddingService.generateEmbedding(metadataText);
+                console.log(`✅ [ADMIN-APPROVE] Metadata Embedding created (Size: ${metadataEmbedding.length})`);
             }
-        } catch (embErr) {
-            console.error("❌ [ADMIN-APPROVE] Embedding generation failed:", embErr);
+        } catch (embErr: any) {
+            console.error("❌ [ADMIN-APPROVE] Embedding generation failed:", embErr.message);
+            console.error("   Stack:", embErr.stack);
         }
 
         // 3. UPDATE DOCUMENT
