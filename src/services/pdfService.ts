@@ -36,7 +36,7 @@ export class PdfService {
                 console.warn('⚠️ [ADMIN] Document header does not match %PDF');
             }
 
-            let parserLib = pdfParse;
+            let parserLib: any = pdfParse;
 
             // Strategy 1: Standard v1 Function
             if (typeof parserLib === 'function') {
