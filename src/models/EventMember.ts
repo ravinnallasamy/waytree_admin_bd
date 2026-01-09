@@ -8,6 +8,8 @@ export interface IEventMember extends Document {
     name: string;
     phoneNumber?: string;
     source: 'join' | 'manual' | 'excel';
+    company?: string;
+    bio?: string;
     joinedAt: Date;
 }
 
@@ -17,6 +19,8 @@ const EventMemberSchema: Schema = new Schema({
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: false },
     name: { type: String, required: true, trim: true },
     phoneNumber: { type: String, trim: true },
+    company: { type: String, trim: true },
+    bio: { type: String, trim: true },
     source: {
         type: String,
         enum: ['join', 'manual', 'excel'],

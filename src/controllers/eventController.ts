@@ -389,93 +389,92 @@ export const approveEvent = async (req: Request, res: Response) => {
             return res.status(400).json({ message: 'Event is already verified' });
         }
 
-        // 1. PDF EXTRACTION & RAG PIPELINE
-        // 1. PDF EXTRACTION & RAG PIPELINE
-        let pdfChunks: any[] = baseEvent.pdfChunks || [];
-        let pdfExtractedTexts: string[] = baseEvent.pdfExtractedTexts || [];
-
-        // Check if we already have valid chunks/text (Optimized: Skip re-processing)
-        const hasValidChunks = pdfChunks.length > 0 && pdfExtractedTexts.length > 0;
-
-        if (hasValidChunks && baseEvent.pdfFiles && baseEvent.pdfFiles.length > 0) {
-            console.log(`✅ [ADMIN-APPROVE] Existing PDF chunks found (${pdfChunks.length}). Skipping RAG pipeline.`);
-        } else if (baseEvent.pdfFiles && baseEvent.pdfFiles.length > 0) {
+        // --- 1. RAG PIPELINE (DOCUMENTS) ---
+        // Triggered only if there are PDF files
+        if (baseEvent.pdfFiles && baseEvent.pdfFiles.length > 0) {
             try {
-                console.log(`📄 [ADMIN-APPROVE] Processing ${baseEvent.pdfFiles.length} PDFs...`);
+                console.log(`📄 [ADMIN-APPROVE] Processing ${baseEvent.pdfFiles.length} PDFs for RAG...`);
 
-                // Reset arrays to ensure fresh processing
-                pdfChunks = [];
-                pdfExtractedTexts = [];
+                // A. Run Python RAG Pipeline (Extract & Chunk)
+                const chunks = await RagPipelineService.processMultiplePdfs(baseEvent.pdfFiles);
+                console.log(`✅ [ADMIN-APPROVE] RAG Pipeline complete. Generated ${chunks.length} chunks.`);
 
-                // Extract unique texts for embedding
-                // Extract unique texts for embedding (Supports PDF, Excel, Txt)
-                for (const fileUrl of baseEvent.pdfFiles) {
-                    if (PdfService.isValidDocument(fileUrl)) {
-                        const text = await PdfService.extractText(fileUrl);
-                        if (text && text.length > 0) {
-                            pdfExtractedTexts.push(text);
-                        }
+                // B. Generate Embeddings & Store in Supabase
+                const { SupabaseService } = await import('../services/supabaseService');
+                const { EmbeddingService } = await import('../services/embeddingService');
+
+                console.log(`🧠 [ADMIN-APPROVE] Generating & Storing Doc Embeddings...`);
+                let processedCount = 0;
+
+                for (let i = 0; i < chunks.length; i++) {
+                    const chunk = chunks[i];
+                    // Generate Embedding (Gemini)
+                    const embedding = await EmbeddingService.generateEmbedding(chunk.text);
+
+                    if (embedding.length > 0) {
+                        // Store to Supabase
+                        await SupabaseService.storeEventDocChunk(
+                            id,
+                            chunk.text,
+                            embedding,
+                            i // chunk index
+                        );
+                        processedCount++;
                     }
                 }
+                console.log(`✅ [ADMIN-APPROVE] Stored ${processedCount} document chunks in Supabase.`);
 
-                // Run Python RAG Pipeline
-                pdfChunks = await RagPipelineService.processMultiplePdfs(baseEvent.pdfFiles);
-                console.log(`✅ [ADMIN-APPROVE] RAG Pipeline completed with ${pdfChunks.length} chunks.`);
             } catch (ragErr: any) {
                 console.error("❌ [ADMIN-APPROVE] PDF/RAG Processing failed:", ragErr.message);
-                console.error("   Stack:", ragErr.stack);
-                // We proceed even if RAG fails (fallback to basic embeddings)
+                // Proceed to verify anyway? Or fail? Usually fail safely but log.
             }
         }
 
-        // 2. GENERATE DUAL EMBEDDINGS (using Gemini via EmbeddingService)
-        let eventEmbedding: number[] = [];
-        let metadataEmbedding: number[] = [];
-
+        // --- 2. METADATA EMBEDDING ---
         try {
-            console.log('📝 [ADMIN-APPROVE] Generating Gemini embeddings...');
-            const tempObj = {
-                ...baseEvent.toObject(),
-                pdfExtractedTexts
-            };
+            const { SupabaseService } = await import('../services/supabaseService');
+            const { EmbeddingService } = await import('../services/embeddingService');
 
-            const metadataText = EmbeddingService.createEventMetadataText(tempObj);
-            const eventText = EmbeddingService.createEventText(tempObj);
+            const metadataText = `
+                Event: ${baseEvent.name}
+                Description: ${baseEvent.description}
+                Headline: ${baseEvent.headline || ''}
+                Tags: ${baseEvent.tags?.join(', ')}
+                Location: ${baseEvent.location}
+            `.trim();
 
-            if (metadataText === eventText) {
-                const sharedEmbedding = await EmbeddingService.generateEmbedding(metadataText);
-                eventEmbedding = sharedEmbedding;
-                metadataEmbedding = sharedEmbedding;
-                console.log(`✅ [ADMIN-APPROVE] Shared Embedding created (Size: ${sharedEmbedding.length})`);
-            } else {
-                eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
-                console.log(`✅ [ADMIN-APPROVE] Event Embedding created (Size: ${eventEmbedding.length})`);
-                metadataEmbedding = await EmbeddingService.generateEmbedding(metadataText);
-                console.log(`✅ [ADMIN-APPROVE] Metadata Embedding created (Size: ${metadataEmbedding.length})`);
+            const metaEmbedding = await EmbeddingService.generateEmbedding(metadataText);
+
+            if (metaEmbedding.length > 0) {
+                await SupabaseService.storeEventMetadata(
+                    id,
+                    metadataText,
+                    metaEmbedding,
+                    { title: baseEvent.name } // extra metadata
+                );
+                console.log(`✅ [ADMIN-APPROVE] Stored Event Metadata embedding in Supabase.`);
             }
-        } catch (embErr: any) {
-            console.error("❌ [ADMIN-APPROVE] Embedding generation failed:", embErr.message);
-            console.error("   Stack:", embErr.stack);
+
+        } catch (metaErr: any) {
+            console.error("❌ [ADMIN-APPROVE] Metadata Embedding failed:", metaErr.message);
         }
 
-        // 3. UPDATE DOCUMENT
+        // --- 3. UPDATE MONGO STATUS ---
+        // We do NOT store embeddings in Mongo anymore.
         const updatedEvent = await Event.findByIdAndUpdate(
             id,
             {
                 isVerified: true,
-                eventEmbedding,
-                metadataEmbedding,
-                pdfChunks,
-                pdfExtractedTexts,
                 isActive: true
+                // Removed: eventEmbedding, metadataEmbedding, pdfChunks
             },
             { new: true }
         );
 
-        console.log(`✅ [ADMIN-APPROVE] Event "${updatedEvent?.name}" approved and semantic pipeline finished.`);
+        console.log(`✅ [ADMIN-APPROVE] Event "${updatedEvent?.name}" verified.`);
 
         res.status(200).json({
-            message: 'Event approved and RAG pipeline processed successfully',
+            message: 'Event approved and RAG pipeline processed (Supabase Ingestion Complete)',
             event: updatedEvent
         });
     } catch (error: any) {

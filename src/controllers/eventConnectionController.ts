@@ -180,6 +180,8 @@ export const getEventConnections = async (req: Request, res: Response) => {
                     name: m.name,
                     email: (m as any).email || '',
                     phoneNumber: m.phoneNumber,
+                    company: m.company || '',  // Add company
+                    bio: m.bio || '',          // Add bio
                     source: m.source,
                     joinedAt: m.joinedAt || (m as any).createdAt,
                     connectionStatus: 'Connected'
@@ -252,13 +254,16 @@ export const getEventConnections = async (req: Request, res: Response) => {
     }
 };
 
+import { EmbeddingService } from '../services/embeddingService';
+import { SupabaseService } from '../services/supabaseService';
+
 /**
  * POST /api/event-connections/add-member
  * Add member manually
  */
 export const addManualMember = async (req: Request, res: Response) => {
     try {
-        const { eventId, name, phoneNumber } = req.body;
+        const { eventId, name, phoneNumber, company, bio } = req.body;
         const event = await Event.findById(eventId);
         if (!event) return res.status(404).json({ success: false, message: 'Circle not found' });
 
@@ -277,11 +282,32 @@ export const addManualMember = async (req: Request, res: Response) => {
             organizerId: event.createdBy,
             name,
             phoneNumber: phoneNumber ? phoneNumber.trim() : undefined,
+            company,
+            bio,
             source: 'manual'
         });
 
-        await newMember.save();
-        res.status(201).json({ success: true, member: newMember });
+        const savedMember = await newMember.save();
+
+        // Generate & Store Embedding
+        try {
+            const profileText = `Name: ${name}. Company: ${company || ''}. Bio: ${bio || ''}. Role: Member`;
+            const embedding = await EmbeddingService.generateEmbedding(profileText);
+            if (embedding.length > 0) {
+                await SupabaseService.storeMemberProfile(
+                    eventId,
+                    (savedMember._id as any).toString(),
+                    profileText,
+                    embedding,
+                    { name, company, bio, phoneNumber }
+                );
+                console.log(`✅ [MEMBER] Stored embedding for ${name}`);
+            }
+        } catch (e) {
+            console.error(`❌ [MEMBER] Failed to generate embedding for ${name}:`, e);
+        }
+
+        res.status(201).json({ success: true, member: savedMember });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -308,6 +334,9 @@ export const uploadMembersExcel = async (req: Request, res: Response) => {
         for (const row of data) {
             const name = row['Name'] || row['name'] || row['NAME'];
             const phone = row['Mobile'] || row['Phone'] || row['Number'] || row['phone'];
+            const company = row['Company'] || row['company'] || row['COMPANY'];
+            const bio = row['Bio'] || row['bio'] || row['BIO'] || row['Designation'] || row['Role']; // Fallback to Title/Role for bio
+
             const trimmedPhone = phone ? String(phone).trim() : undefined;
 
             if (name) {
@@ -325,9 +354,27 @@ export const uploadMembersExcel = async (req: Request, res: Response) => {
                         organizerId: event.createdBy,
                         name,
                         phoneNumber: trimmedPhone,
+                        company,
+                        bio,
                         source: 'excel'
                     });
+
                     added.push(member);
+
+                    // Generate & Store Embedding (Async, don't block loop too much, or await if strict)
+                    // Better to await to ensure reliable ingestion even if slower
+                    const profileText = `Name: ${name}. Company: ${company || ''}. Bio: ${bio || ''}. Role: Member`;
+                    const embedding = await EmbeddingService.generateEmbedding(profileText);
+                    if (embedding.length > 0) {
+                        await SupabaseService.storeMemberProfile(
+                            eventId,
+                            (member._id as any).toString(),
+                            profileText,
+                            embedding,
+                            { name, company, bio, phoneNumber: trimmedPhone }
+                        );
+                    }
+
                 } catch (err) {
                     console.error('Error adding member row:', err);
                 }
